@@ -2,28 +2,15 @@ const con = require('./connector');
 const jwt = require('jsonwebtoken');
 var bodyParser = require('body-parser')
 var jsonParser = bodyParser.json()
-
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization']
-    const token = authHeader && authHeader.split(' ')[1]
-
-    if (token == null) return res.sendStatus(401)
-
-    jwt.verify(token, process.env.TOKEN_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403)
-        req.user = user
-
-        next()
-    })
-}
+var auth = require('./authentication')
 
 function initModuleRoutes(app) {
 
-    app.post('/createmodule', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/createmodule', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
 
-            //module validation
+            //data validation
             const validation = await con.query(`select id from modules where name = ?`, [requestbody.name]);
             if (validation[0].length < 1) {
                 //module creation
@@ -39,7 +26,7 @@ function initModuleRoutes(app) {
         }
     })
 
-    app.patch('/updatemodule/:id', jsonParser, authenticateToken, async (req, res) => {
+    app.patch('/updatemodule/:id', jsonParser, auth.authenticateToken, async (req, res) => {
         let patchid = req.params.id;
         let requestbody = req.body;
         try {
@@ -51,14 +38,14 @@ function initModuleRoutes(app) {
                 return;
             }
 
-            validation = await con.query(`select id from modules where name = ? and total_hours = ? and id <> ?`, [requestbody.name, requestbody.year, patchid]);
+            validation = await con.query(`select id from modules where name = ? and id <> ?`, [requestbody.name, patchid]);
             if (validation[0].length > 0) {
                 res.json({ error: true, errormessage: "MODULE_EXISTS" });
                 return;
             }
 
             //update module
-            const data = await con.execute(`update modules set name = ?, total_hours = ?`, [requestbody.name, requestbody.total_hours]);
+            const data = await con.execute(`update modules set name = ?, total_hours = ? where id = ?`, [requestbody.name, requestbody.total_hours, patchid]);
             res.json(data);
 
         } catch (err) {
@@ -68,7 +55,7 @@ function initModuleRoutes(app) {
 
     })
 
-    app.delete('/deletemodule/:id', authenticateToken, async (req, res) => {
+    app.delete('/deletemodule/:id', auth.authenticateToken, async (req, res) => {
         let deleteid = req.params.id;
         try {
 
@@ -89,7 +76,7 @@ function initModuleRoutes(app) {
     })
 
 
-    app.get('/getallmodules', authenticateToken, async (req, res) => {
+    app.get('/getallmodules', auth.authenticateToken, async (req, res) => {
         pagenumber = (req.query.pagenumber - 1) * req.query.pagesize;
         pagesize = (req.query.pagenumber * req.query.pagesize) - 1;
         try {
@@ -102,11 +89,11 @@ function initModuleRoutes(app) {
         }
     })
 
-    app.get('/getusermodules', authenticateToken, async (req, res) => {
+    app.get('/getusermodules', auth.authenticateToken, async (req, res) => {
         try {
-            const [data] = await con.execute(`select distinct m.* from users_modules um 
-          inner join modules m on um.id_module = m.id
-          where um.id_user = ?`, [req.user.userid]);
+            const [data] = await con.execute(`select distinct m.* from modules m 
+            inner join users_modules um on um.id_module = m.id
+            where um.id_user = ?`, [req.user.userid]);
             res.json(data);
         } catch (err) {
             console.log("Getusersmodules Error:" + err);
@@ -114,7 +101,7 @@ function initModuleRoutes(app) {
         }
     })
 
-    app.post('/linkmodule', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/linkmodule', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
             //data validation
@@ -134,8 +121,8 @@ function initModuleRoutes(app) {
                 return;
             }
 
-            //add user/module
-            const data = await con.execute(`INSERT INTO users_modules (id_user, id_module) VALUES (?,?)`, [requestbody.id_user, requestbody.id_module]);
+            //add role/module
+            const data = await con.execute(`INSERT INTO users_modules (id_module, id_user) VALUES (?,?)`, [requestbody.id_module, requestbody.id_user]);
             res.json(data);
         } catch (err) {
             console.log("linkmodule Error:" + err);
@@ -143,18 +130,18 @@ function initModuleRoutes(app) {
         }
     })
 
-    app.post('/unlinkmodule', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/unlinkmodule', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
             //data validation
-            let validation = await con.query(`select * from users_modules where id_user = ? and id_module`, [requestbody.id_user, requestbody.id_module]);
+            let validation = await con.query(`select * from users_modules where id_user = ? and id_module = ?`, [requestbody.id_user, requestbody.id_module]);
             if (validation[0].length < 1) {
                 res.json({ error: true, errormessage: "LINK_NOT_EXISTS" });
                 return;
             }
 
-            //delete user/module
-            const data = await con.execute(`DELETE FROM users_modules WHERE id_user = ? and id_module = ?`, [requestbody.id_user, requestbody.id_module]);
+            //remove user/module
+            const data = await con.execute(`DELETE FROM users_modules WHERE id_user = ? AND id_module = ?`, [requestbody.id_user, requestbody.id_module]);
             res.json(data);
         } catch (err) {
             console.log("unlinkmodule Error:" + err);

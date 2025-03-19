@@ -1,25 +1,13 @@
 const con = require('./connector');
 const jwt = require('jsonwebtoken');
-var bodyParser = require('body-parser')
-var jsonParser = bodyParser.json()
+var bodyParser = require('body-parser');
+var jsonParser = bodyParser.json();
+var auth = require('./authentication');
 
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization']
-    const token = authHeader && authHeader.split(' ')[1]
-
-    if (token == null) return res.sendStatus(401)
-
-    jwt.verify(token, process.env.TOKEN_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403)
-        req.user = user
-
-        next()
-    })
-}
 
 function initLessonRoutes(app) {
 
-    app.post('/createlesson', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/createlesson', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
 
@@ -44,7 +32,7 @@ function initLessonRoutes(app) {
         }
     })
 
-    app.patch('/updatelesson/:id', jsonParser, authenticateToken, async (req, res) => {
+    app.patch('/updatelesson/:id', jsonParser, auth.authenticateToken, async (req, res) => {
         let patchid = req.params.id;
         let requestbody = req.body;
         try {
@@ -78,7 +66,7 @@ function initLessonRoutes(app) {
 
     })
 
-    app.delete('/deletelesson/:id', authenticateToken, async (req, res) => {
+    app.delete('/deletelesson/:id', auth.authenticateToken, async (req, res) => {
         let deleteid = req.params.id;
         try {
 
@@ -98,7 +86,7 @@ function initLessonRoutes(app) {
         }
     })
 
-    app.get('/getalllessons', authenticateToken, async (req, res) => {
+    app.get('/getalllessons', auth.authenticateToken, async (req, res) => {
         pagenumber = (req.query.pagenumber - 1) * req.query.pagesize;
         pagesize = (req.query.pagenumber * req.query.pagesize) - 1;
         try {
@@ -111,11 +99,11 @@ function initLessonRoutes(app) {
         }
     })
 
-    app.get('/getcalendar', jsonParser, authenticateToken, async (req, res) => {
-        let month=req.query.mounth;
-        let year=req.query.year;
+    app.get('/getcalendar', jsonParser, auth.authenticateToken, async (req, res) => {
+        let month = req.query.mounth;
+        let year = req.query.year;
         try {
-            const [data] = await con.execute(`select * from lessons where startdate LIKE ?`,[`${year}-${month}%`]);
+            const [data] = await con.execute(`select * from lessons where startdate LIKE ?`, [`${year}-${month}%`]);
 
             res.json(data);
         } catch (err) {
@@ -127,7 +115,7 @@ function initLessonRoutes(app) {
         //filtrato per anno/mese
     })
 
-    app.post('/generateevents', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/generateevents', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
             // Verifica se il modulo esiste
@@ -138,57 +126,41 @@ function initLessonRoutes(app) {
                 return;
             }
 
-            // Verifica se ci sono conflitti di lezioni
-            validation = await con.query(`select id from lessons where id_module = ? and (? between startdate and enddate or ? between startdate and enddate)`,
-                [requestbody.id_module, requestbody.startdate, requestbody.enddate]);
-            if (validation[0].length > 0) {
-                console.log("Lezione esistente nel periodo indicato");
-                res.json({ error: true, errormessage: "LESSON_EXISTS" });
-                return;
-            }
 
             // Creazione delle lezioni
-            let currDate = new Date(requestbody.startdate);
-            const endDate = new Date(requestbody.enddate);
-             const lessons = [];
+            let currentDate = new Date(requestbody.startdate);
+            let enddate = new Date(requestbody.enddate);
+            let arrLessons = [];
 
-            while (currDate <= endDate) {
-                // Verifica se il giorno della settimana corrisponde
-                if (currDate.getDay() === requestbody.day) {
-                    // Crea la lezione con l'orario di inizio e fine
-                    const lessonStart = new Date(currDate);
-                    lessonStart.setHours(requestbody.starthour, requestbody.startminute, 0, 0); // Imposta l'orario di inizio
+            while (currentDate <= enddate) {
+                // Verifica se il giorno corrente corrisponde a quello specificato
+                if (currentDate.getDay() == requestbody.day) {
+                    const year = currentDate.getFullYear();  // Usa getFullYear() invece di getYear()
+                    const month = currentDate.getMonth();
+                    const day = currentDate.getDate();  // Usa getDate() per ottenere il giorno del mese
 
-                    const lessonEnd = new Date(currDate);
-                    lessonEnd.setHours(requestbody.endhour, requestbody.endminute, 0, 0); // Imposta l'orario di fine
+                    // Creazione della data di inizio e fine della lezione
+                    const startDate = new Date(year, month, day, requestbody.starthour, requestbody.startminute);
+                    //const startDate = new Date(`${year}-${month + 1}-${day} ${requestbody.starthour}:${requestbody.startminute}`);
+                    const endDate = new Date(year, month, day, requestbody.endhour, requestbody.endminute);
 
-                    // Converti la data in formato MySQL 'YYYY-MM-DD HH:MM:SS'
-                    const startdate = lessonStart.toISOString().slice(0, 19).replace('T', ' '); // Rimuovi il 'T' e il 'Z'
-                    const enddate = lessonEnd.toISOString().slice(0, 19).replace('T', ' '); // Rimuovi il 'T' e il 'Z'
-
-                    const argument = requestbody.argument || null;
-                    const note = requestbody.note || null;
-                    const idModule = requestbody.id_module;
-
-                    // Debug: log per verificare i dettagli della lezione
-                    console.log("Creando lezione:", startdate, enddate, argument, note, idModule);
-
-                    // Inserisci la lezione nel database
-                    const [data] = await con.execute(`insert into lessons (startdate, enddate, argument, note, id_module) values (?,?,?,?,?)`, 
-                        [startdate, enddate, argument, note, idModule]);
-
-                    // Debug: log per vedere il risultato della query
-                    console.log("Lezione inserita:", data);
-
-                    lessons.push(data); // Aggiungi la lezione creata all'elenco
+                    // Verifica se ci sono conflitti di lezioni
+                    validation = await con.query(`select id from lessons where id_module = ? and ? between startdate and enddate or ? between startdate and enddate`,
+                        [requestbody.id_module, startDate, endDate]);
+                    if (validation[0].length <= 0) {
+                        // Esecuzione della query SQL per inserire la lezione
+                        let [data] = await con.execute(
+                            `INSERT INTO lessons (startdate, enddate, id_module) VALUES (?,?,?)`, [startDate, endDate, requestbody.id_module]
+                        );
+                        arrLessons.push({ id: data.insertId, startdate: startDate, enddate: endDate, id_module: requestbody.id_module });
+                    }
                 }
-
-                // Passa al giorno successivo
-                currDate.setDate(currDate.getDate() + 1);
+                // Avanzamento della data al prossimo giorno
+                currentDate.setDate(currentDate.getDate() + 1);  // Passa al giorno successivo
             }
 
-            // Risposta con i dati delle lezioni create
-            res.json({ lessons });
+            // Risposta JSON con i dati
+            res.json(arrLessons);
 
         } catch (err) {
             console.log("Errore durante la creazione delle lezioni:", err);
@@ -197,64 +169,69 @@ function initLessonRoutes(app) {
     });
 
 
-    app.post('/signpresence', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/signpresence', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
-    
         try {
-            // **1. Validazione ID Lezione**
+            
             let validation = await con.query(`SELECT id FROM lessons WHERE id = ?`, [requestbody.id_lesson]);
             if (validation.length < 1) {
                 return res.json({ error: true, errormessage: "ID_LESSON_NOT_EXIST" });
             }
-    
-            // **2. Validazione ID Utente**
             validation = await con.query(`SELECT id FROM users WHERE id = ?`, [requestbody.id_user]);
             if (validation.length < 1) {
                 return res.json({ error: true, errormessage: "ID_USER_NOT_EXIST" });
             }
-    
-            // **3. Controllo validità della data**
+            //vede se la data della firma è dello stesso giorno della lezione
             validation = await con.query(
-                `SELECT id FROM lessons WHERE ? >= startdate AND ? <= enddate AND id = ?`, [requestbody.signdate, requestbody.signdate, requestbody.id_lesson]);
+                `SELECT id FROM lessons WHERE ? BETWEEN startdate AND enddate AND id = ?`, [requestbody.signdate,  requestbody.id_lesson]);
             if (validation.length === 0) {
                 return res.json({ error: true, errormessage: "INVALID_SIGN" });
             }
-            validation = await con.query(`SELECT id FROM lessons_presence WHERE id_user = ? AND signdate = ?`, [requestbody.id_user, requestbody.signdate] );
-            if (validation.length > 0) {
+            //è gia stato firmato
+            validation = await con.query(`SELECT * FROM lessons_presences WHERE  id_user = ? AND id_lesson= ?`, [requestbody.id_user, requestbody.id_lesson]);
+            console.log(validation)
+            if (validation[0].length >0) {
                 return res.json({ error: true, errormessage: "SIGNPRESENCE_EXIST" });
             }
-    
-            // **5. Inserimento firma presenza**
-            const [data] = await con.execute( `INSERT INTO lessons_presence (id_lesson, id_user, signdate) VALUES (?, ?, ?)`, [requestbody.id_lesson, requestbody.id_user, requestbody.signdate] );
-    
+
+            const [data] = await con.execute(`INSERT INTO lessons_presences (id_lesson, id_user, signdate) VALUES (?, ?, ?)`, [requestbody.id_lesson, requestbody.id_user, requestbody.signdate]);
             res.json({ success: true, data });
-    
+
         } catch (err) {
             console.error("signpresence Error:", err);
             res.json({ error: true, errormessage: "GENERIC_ERROR" });
         }
     });
-    
 
-    app.get('/getlessonpresences', jsonParser, authenticateToken, async (req, res) => {
-        let requestbody = req.body;
+
+    app.get('/getlessonpresences', jsonParser, auth.authenticateToken, async (req, res) => {
+        let lesson = req.query.id_lesson;
+        try {
+            const [data] = await con.execute(`select * from lessons_presences where id_lesson = ?`, [lesson]);
+
+            res.json(data);
+        } catch (err) {
+            console.log("Getlessonpresence Error:" + err);
+            res.json({ error: true, errormessage: "GENERIC_ERROR" });
+        }
+
         //recupera l'elenco delle presenze
         //dato l'id lezione
     })
 
-    app.get('/getuserpresences', jsonParser, authenticateToken, async (req, res) => {
+    app.get('/getuserpresences', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         //recupera l'elenco delle presenze
         //dell'utente corrente, da data a data
     })
 
-    app.get('/getmodulepresences', jsonParser, authenticateToken, async (req, res) => {
+    app.get('/getmodulepresences', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         //recupera l'elenco delle presenze
         //per il modulo indicato; opzionale filtro per utente
     })
 
-    app.get('/calculateuserpresences', jsonParser, authenticateToken, async (req, res) => {
+    app.get('/calculateuserpresences', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         //recupera l'elenco delle presenze
         //utente e calcola la percentuale presenze rispetto al totale ore di ogni modulo

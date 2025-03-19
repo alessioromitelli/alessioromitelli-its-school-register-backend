@@ -3,28 +3,11 @@ const con = require('./connector');
 const jwt = require('jsonwebtoken');
 var bodyParser = require('body-parser')
 var jsonParser = bodyParser.json()
-
-function generateAccessToken(payload) {
-    return jwt.sign(payload, process.env.TOKEN_SECRET, { expiresIn: '1800s' });
-}
-
-function authenticateToken(req, res, next) {
-    const authHeader = req.headers['authorization']
-    const token = authHeader && authHeader.split(' ')[1]
-
-    if (token == null) return res.sendStatus(401)
-
-    jwt.verify(token, process.env.TOKEN_SECRET, (err, user) => {
-        if (err) return res.sendStatus(403)
-        req.user = user
-
-        next()
-    })
-}
+var auth = require('./authentication')
 
 function initUserRoutes(app) {
 
-    app.get('/getallusers', authenticateToken, async (req, res) => {
+    app.get('/getallusers', auth.authenticateToken, async (req, res) => {
         pagenumber = (req.query.pagenumber - 1) * req.query.pagesize;
         pagesize = (req.query.pagenumber * req.query.pagesize) - 1;
         try {
@@ -37,7 +20,7 @@ function initUserRoutes(app) {
         }
     })
 
-    app.get('/getuser', authenticateToken, async (req, res) => {
+    app.get('/getuser', auth.authenticateToken, async (req, res) => {
         try {
             const [data] = await con.execute(`select * from users where id = ? LIMIT 1`, [req.user.userid]);
             res.json(data);
@@ -47,7 +30,7 @@ function initUserRoutes(app) {
         }
     })
 
-    app.post('/createuser', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/createuser', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
 
@@ -73,15 +56,14 @@ function initUserRoutes(app) {
         let requestbody = req.body;
         try {
             var hash = crypto.createHash('sha256').update(requestbody.pwd).digest('hex');
-            const [data]= await con.query(`select u.id, urc.id_role, urc.id_course from users u
+            const [data] = await con.query(`select u.id, urc.id_role, urc.id_course from users u
             inner join users_roles_courses urc on urc.id_user = u.id
             where u.email = ? and u.password = ? and u.active = 1`, [requestbody.email, hash]);
-            console.log(data)
             if (data.length == 0) {
                 res.json({ error: true, errormessage: "INVALID_USERPWD" });
             } else {
-                const payload = { username: requestbody.email, userid: data[0][`id`], roles: data };
-                const token = generateAccessToken(payload);
+                const payload = { username: requestbody.email, userid: data[0]["id"], roles: data };
+                const token = auth.generateAccessToken(payload);
                 res.json({ error: false, errormessage: "", token: token });
             }
         } catch (err) {
@@ -90,21 +72,21 @@ function initUserRoutes(app) {
         }
     })
 
-    app.patch('/updateuser/:id', jsonParser, authenticateToken, async (req, res) => {
+    app.patch('/updateuser/:id', jsonParser, auth.authenticateToken, async (req, res) => {
         let patchid = req.params.id;
         let requestbody = req.body;
         try {
 
             //data validation
-            let validation = await con.query(`select id from users where id = ?`, [patchid]);
-            if (validation[0].length < 1) {
-                res.json({ error: true, errormessage: "INVALID_USER_ID" });
+            let validation = await con.query(`select id from users where id = ?`, [requestbody.fiscalcode, patchid]);
+            if (validation[0].length > 0) {
+                res.json({ error: true, errormessage: "INVALID_FISCALCODE" });
                 return;
             }
 
-            validation = await con.query(`select * from users where fiscalcode = ? and id <> ?`, [requestbody.fiscalcode, patchid]);
-            if(validation[0].length > 0) {
-                res.json({error: true, errormessage: "USER_ERROR"});
+            validation = await con.query(`select id from users where fiscalcode = ? and id <> ?`, [patchid]);
+            if (validation[0].length < 1) {
+                res.json({ error: true, errormessage: "INVALID_USER_ID" });
                 return;
             }
 
@@ -119,7 +101,7 @@ function initUserRoutes(app) {
 
     })
 
-    app.post('/updatepwd', jsonParser, authenticateToken, async (req, res) => {
+    app.post('/updatepwd', jsonParser, auth.authenticateToken, async (req, res) => {
         let requestbody = req.body;
         try {
 
@@ -142,7 +124,7 @@ function initUserRoutes(app) {
 
     })
 
-    app.delete('/deleteuser/:id', authenticateToken, async (req, res) => {
+    app.delete('/deleteuser/:id', auth.authenticateToken, async (req, res) => {
         let deleteid = req.params.id;
         try {
 
