@@ -76,6 +76,7 @@ function initUserRoutes(app) {
             const [data] = await con.query(`select u.id, urc.id_role, urc.id_course from users u
             inner join users_roles_courses urc on urc.id_user = u.id
             where u.email = ? and u.password = ? and u.active = 1`, [requestbody.email, hash]);
+            console.log(data)
             if (data.length == 0) {
                 res.json({ error: true, errormessage: "INVALID_USERPWD" });
             } else {
