@@ -107,7 +107,17 @@ function initLessonRoutes(app) {
     })
 
     app.get('/getcalendar', jsonParser, authenticateToken, async (req, res) => {
-        let requestbody = req.body;
+        let month=req.query.mounth;
+        let year=req.query.year;
+        try {
+            const [data] = await con.execute(`select * from lessons where startdate LIKE ?`,[`${year}-${month}%`]);
+
+            res.json(data);
+        } catch (err) {
+            console.log("Getcalendar Error:" + err);
+            res.json({ error: true, errormessage: "GENERIC_ERROR" });
+        }
+
         //recupera il calendario
         //filtrato per anno/mese
     })
